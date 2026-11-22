@@ -44,14 +44,17 @@ apt-get install -y \
   libjpeg-turbo8-dev || apt-get install -y libjpeg62-turbo-dev || true
 
 ensure_node() {
+  # Firebase 13+ wants Node >= 24 for engine checks; use 24.x when possible.
+  local major=0
   if command -v node >/dev/null 2>&1 && command -v npm >/dev/null 2>&1; then
-    if node -v | grep -Eq 'v(1[8-9]|[2-9][0-9])'; then
+    major="$(node -v | sed -E 's/^v([0-9]+).*/\1/')"
+    if [[ "${major}" -ge 24 ]]; then
       log "Using existing Node $(node -v) / npm $(npm -v)"
       return 0
     fi
   fi
-  log "Installing Node.js 20.x via NodeSource (includes npm)"
-  curl -fsSL https://deb.nodesource.com/setup_20.x | bash -
+  log "Installing Node.js 24.x via NodeSource (includes npm)"
+  curl -fsSL https://deb.nodesource.com/setup_24.x | bash -
   apt-get install -y nodejs
 }
 
@@ -98,8 +101,12 @@ export DJANGO_DEBUG="${DJANGO_DEBUG:-0}"
 
 log "Building frontend"
 cd "${APP_DIR}"
-npm ci --omit=dev || npm install
+# Need full install (incl. vite/typescript) to run the production build
+rm -rf node_modules
+npm ci || npm install
 npm run build
+# Drop build-only tooling after dist/ is produced (optional size save)
+npm prune --omit=dev || true
 
 log "Setting up Python backend"
 cd "${APP_DIR}/backend"
