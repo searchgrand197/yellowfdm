@@ -1,0 +1,40 @@
+# Logs
+logs
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+lerna-debug.log*
+
+node_modules
+dist
+dist-ssr
+*.local
+backend/venv/
+backend/db.sqlite3
+backend/**/__pycache__/
+backend/media/
+backend/staticfiles/
+*.pyc
+.env
+
+# Legacy dump (keep media + db for import_v1; skip bulky unused trees)
+foodporiumv1.0/.idea/
+foodporiumv1.0/homepage/
+foodporiumv1.0/static/
+foodporiumv1.0/staticfiles/
+foodporiumv1.0/testfiles/
+foodporiumv1.0/foodporium/
+foodporiumv1.0/copy_files.ps1
+
+# Editor directories and files
+.vscode/*
+!.vscode/extensions.json
+.idea
+.DS_Store
+*.suo
+*.ntvs*
+*.njsproj
+*.sln
+*.sw?

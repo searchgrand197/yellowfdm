@@ -1,0 +1,22 @@
+[Unit]
+Description=Foodporium Gunicorn (yellowfdm)
+After=network.target
+
+[Service]
+User=root
+Group=root
+WorkingDirectory=/root/yellowfdm/backend
+EnvironmentFile=-/root/yellowfdm/.env
+Environment=DJANGO_DEBUG=0
+ExecStart=/root/yellowfdm/backend/venv/bin/gunicorn \
+    --workers 3 \
+    --bind 127.0.0.1:8000 \
+    --timeout 120 \
+    --access-logfile /var/log/yellowfdm-access.log \
+    --error-logfile /var/log/yellowfdm-error.log \
+    config.wsgi:application
+Restart=always
+RestartSec=3
+
+[Install]
+WantedBy=multi-user.target
