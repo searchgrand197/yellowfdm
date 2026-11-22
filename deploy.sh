@@ -36,18 +36,28 @@ export DEBIAN_FRONTEND=noninteractive
 
 log "Installing system packages"
 apt-get update -y
+# Note: do NOT apt-install `npm` — NodeSource `nodejs` already ships npm and conflicts with Debian npm.
 apt-get install -y \
   git curl nginx certbot python3-certbot-nginx \
   python3 python3-venv python3-pip \
-  build-essential libjpeg-dev zlib1g-dev \
-  nodejs npm
+  build-essential zlib1g-dev \
+  libjpeg-turbo8-dev || apt-get install -y libjpeg62-turbo-dev || true
 
-# Prefer Node 20+ when available via nodesource (optional best-effort)
-if ! node -v 2>/dev/null | grep -Eq 'v(1[8-9]|[2-9][0-9])'; then
-  log "Upgrading Node.js via NodeSource 20.x"
+ensure_node() {
+  if command -v node >/dev/null 2>&1 && command -v npm >/dev/null 2>&1; then
+    if node -v | grep -Eq 'v(1[8-9]|[2-9][0-9])'; then
+      log "Using existing Node $(node -v) / npm $(npm -v)"
+      return 0
+    fi
+  fi
+  log "Installing Node.js 20.x via NodeSource (includes npm)"
   curl -fsSL https://deb.nodesource.com/setup_20.x | bash -
   apt-get install -y nodejs
-fi
+}
+
+ensure_node
+command -v node >/dev/null
+command -v npm >/dev/null
 
 log "Fetching code into ${APP_DIR}"
 if [[ -d "${APP_DIR}/.git" ]]; then
