@@ -158,18 +158,27 @@ shopt -u nullglob
 nginx -t
 systemctl reload nginx
 
-log "Ensuring HTTPS for Foodporium (certbot)"
-certbot --nginx -d "${DOMAIN_WWW}" -d "${DOMAIN_APEX}" --non-interactive --agree-tos \
-  --register-unsafely-without-email --redirect || true
-
-# If certbot left foodporium on HTTP-only, force-enable SSL install once more when asked.
-if [[ "${SSL}" -eq 1 ]]; then
-  certbot --nginx -d "${DOMAIN_WWW}" -d "${DOMAIN_APEX}" --non-interactive --agree-tos \
-    --register-unsafely-without-email --redirect || true
+log "Ensuring HTTPS certificate for ${DOMAIN_WWW}"
+# Without a 443 server_name for foodporium, nginx serves the default SSL site
+# (often another app on this VPS). Always request/install the cert.
+if ! certbot --nginx -d "${DOMAIN_WWW}" -d "${DOMAIN_APEX}" --non-interactive --agree-tos \
+  --register-unsafely-without-email --redirect; then
+  echo "WARNING: certbot failed. Check DNS A records for ${DOMAIN_WWW} / ${DOMAIN_APEX} point here." >&2
+  echo "Then run:  certbot --nginx -d ${DOMAIN_WWW} -d ${DOMAIN_APEX}" >&2
 fi
 
 nginx -t
 systemctl reload nginx
+
+# Sanity: foodporium must listen on 443 after certbot, otherwise HTTPS hits the wrong app.
+if ! grep -Rqs "listen 443" /etc/nginx/sites-enabled/foodporium /etc/nginx/sites-available/foodporium 2>/dev/null \
+  && ! grep -Rqs "listen 443" /etc/letsencrypt/options-ssl-nginx.conf 2>/dev/null; then
+  :
+fi
+if ! nginx -T 2>/dev/null | awk '/server_name www.foodporium.in/{f=1} f&&/listen 443/{found=1} f&&/^[[:space:]]*server \{/{if(found){ok=1} f=0} END{exit ok?0:1}'; then
+  echo "WARNING: No HTTPS server block matched for www.foodporium.in yet." >&2
+  echo "HTTP works on port 80; fix SSL with: certbot --nginx -d ${DOMAIN_WWW} -d ${DOMAIN_APEX}" >&2
+fi
 
 systemctl --no-pager --full status yellowfdm || true
 
@@ -178,8 +187,9 @@ echo "App dir : ${APP_DIR}"
 echo "Domain  : https://${DOMAIN_WWW}"
 echo "API     : https://${DOMAIN_WWW}/api/"
 echo "Admin   : https://${DOMAIN_WWW}/admin/   (React staff UI)"
-echo "Backend : 127.0.0.1:8010 (yellowfdm) — not shared with apps on :8000"
+echo "Backend : 127.0.0.1:8010 (yellowfdm)"
+echo "HTTP check:  curl -sI http://${DOMAIN_WWW} | head -5"
+echo "HTTPS check: curl -sI https://${DOMAIN_WWW} | head -5"
 echo
-echo "Verify nginx hosts:  nginx -T 2>/dev/null | grep -E 'server_name|root |proxy_pass|listen'"
 echo "First-time menu seed:  bash ${APP_DIR}/deploy.sh --seed"
 echo "Edit secrets:          nano ${APP_DIR}/.env && systemctl restart yellowfdm"
