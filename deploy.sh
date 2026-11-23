@@ -138,18 +138,38 @@ systemctl daemon-reload
 systemctl enable yellowfdm
 systemctl restart yellowfdm
 
-log "Configuring nginx for ${DOMAIN_WWW}"
+log "Configuring nginx for ${DOMAIN_WWW} (isolate from other apps)"
 cp "${APP_DIR}/deploy/nginx-foodporium.conf" /etc/nginx/sites-available/foodporium
 ln -sfn /etc/nginx/sites-available/foodporium /etc/nginx/sites-enabled/foodporium
 rm -f /etc/nginx/sites-enabled/default
+
+# Strip foodporium domains from OTHER enabled vhosts (common cause of wrong app on HTTPS).
+shopt -s nullglob
+for site in /etc/nginx/sites-enabled/*; do
+  base="$(basename "${site}")"
+  [[ "${base}" == "foodporium" ]] && continue
+  if grep -Eqr 'server_name.*(foodporium\.in|www\.foodporium\.in)' "${site}" 2>/dev/null; then
+    log "Disabling conflicting site ${base} (claimed foodporium.in)"
+    rm -f "${site}"
+  fi
+done
+shopt -u nullglob
+
 nginx -t
 systemctl reload nginx
 
+log "Ensuring HTTPS for Foodporium (certbot)"
+certbot --nginx -d "${DOMAIN_WWW}" -d "${DOMAIN_APEX}" --non-interactive --agree-tos \
+  --register-unsafely-without-email --redirect || true
+
+# If certbot left foodporium on HTTP-only, force-enable SSL install once more when asked.
 if [[ "${SSL}" -eq 1 ]]; then
-  log "Requesting Let's Encrypt certificate"
   certbot --nginx -d "${DOMAIN_WWW}" -d "${DOMAIN_APEX}" --non-interactive --agree-tos \
     --register-unsafely-without-email --redirect || true
 fi
+
+nginx -t
+systemctl reload nginx
 
 systemctl --no-pager --full status yellowfdm || true
 
@@ -157,8 +177,9 @@ log "Deploy complete"
 echo "App dir : ${APP_DIR}"
 echo "Domain  : https://${DOMAIN_WWW}"
 echo "API     : https://${DOMAIN_WWW}/api/"
-echo "Admin   : https://${DOMAIN_WWW}/admin/"
+echo "Admin   : https://${DOMAIN_WWW}/admin/   (React staff UI)"
+echo "Backend : 127.0.0.1:8010 (yellowfdm) — not shared with apps on :8000"
 echo
+echo "Verify nginx hosts:  nginx -T 2>/dev/null | grep -E 'server_name|root |proxy_pass|listen'"
 echo "First-time menu seed:  bash ${APP_DIR}/deploy.sh --seed"
-echo "Enable HTTPS:          bash ${APP_DIR}/deploy.sh --ssl"
 echo "Edit secrets:          nano ${APP_DIR}/.env && systemctl restart yellowfdm"

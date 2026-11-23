@@ -8,9 +8,10 @@ Group=root
 WorkingDirectory=/root/yellowfdm/backend
 EnvironmentFile=-/root/yellowfdm/.env
 Environment=DJANGO_DEBUG=0
+# Port 8010 — keep free of other apps (health, etc.) that use 8000
 ExecStart=/root/yellowfdm/backend/venv/bin/gunicorn \
     --workers 3 \
-    --bind 127.0.0.1:8000 \
+    --bind 127.0.0.1:8010 \
     --timeout 120 \
     --access-logfile /var/log/yellowfdm-access.log \
     --error-logfile /var/log/yellowfdm-error.log \
