@@ -1,79 +1,161 @@
-import { ArrowLeft, Minus, Plus, Ticket, Wallet } from 'lucide-react'
-import { useEffect, useMemo, useState, type FormEvent } from 'react'
+import { ArrowLeft, ChevronDown, Minus, Plus, Ticket, Wallet, X } from 'lucide-react'
+import { useEffect, useMemo, useRef, useState, type FormEvent } from 'react'
 import { Link, useNavigate } from 'react-router-dom'
 import { api } from '../api/client'
+import { CouponConfetti } from '../components/CouponConfetti'
 import { useCart } from '../context/CartContext'
 import { useWallet } from '../context/WalletContext'
 import { openRazorpayCheckout } from '../lib/razorpay'
+import type { Coupon } from '../types'
 import { lineUnitPrice } from '../types'
 import { formatMoney } from '../utils/money'
-
-const TAX_RATE = 0.05
-const DELIVERY_FEE = 40
-const FREE_DELIVERY_MIN = 200
-const PROMO_CODES: Record<string, number> = {
-  'FIRST TIME USER': 10,
-  FIRSTTIME: 10,
-  FOOD10: 10,
-}
 
 function padQty(n: number) {
   return String(n).padStart(2, '0')
 }
 
 export function CartPage() {
-  const { lines, total: subtotal, setQuantity, clear } = useCart()
+  const { lines, total: subtotal, setQuantity, removeItem, clear } = useCart()
   const { balance, couponCode, scratched, setPhone, refresh } = useWallet()
   const navigate = useNavigate()
   const [name, setName] = useState('')
   const [phoneInput, setPhoneInput] = useState('')
-  const [address, setAddress] = useState('')
   const [promoInput, setPromoInput] = useState('')
   const [promoApplied, setPromoApplied] = useState(0)
-  const [promoMessage, setPromoMessage] = useState('')
+  const [couponCleared, setCouponCleared] = useState(false)
+  const [couponOpen, setCouponOpen] = useState(false)
+  const [removingKeys, setRemovingKeys] = useState<string[]>([])
   const [useWalletPay, setUseWalletPay] = useState(true)
   const [submitting, setSubmitting] = useState(false)
   const [error, setError] = useState('')
   const [doneId, setDoneId] = useState<number | null>(null)
+  const [confettiBurst, setConfettiBurst] = useState(0)
+  const [serverCoupons, setServerCoupons] = useState<Coupon[]>([])
+  const couponMenuRef = useRef<HTMLDivElement>(null)
+  const confettiOnceRef = useRef(false)
 
-  const couponOptions = useMemo(() => {
-    if (!scratched || !couponCode) return []
-    const key = couponCode.toUpperCase()
-    const amount = PROMO_CODES[key] ?? 10
-    return [{ code: couponCode, amount, label: `${couponCode} · ₹${amount} off` }]
-  }, [scratched, couponCode])
+  const celebrateCoupon = () => {
+    setConfettiBurst((n) => n + 1)
+  }
 
   useEffect(() => {
-    if (!couponOptions.length || promoApplied) return
-    const first = couponOptions[0]
+    void api.getCoupons().then(setServerCoupons).catch(() => setServerCoupons([]))
+  }, [])
+
+  const couponOptions = useMemo(() => {
+    const fromApi = serverCoupons.map((c) => {
+      const minOrder = Number(c.min_order_value || 0)
+      const eligible = subtotal >= minOrder
+      const bits = [`${c.code} · ₹${c.amount} off`]
+      if (minOrder) bits.push(`min ₹${minOrder}`)
+      if (c.one_time) bits.push('one time')
+      return {
+        code: c.code,
+        amount: Number(c.amount),
+        minOrder,
+        oneTime: Boolean(c.one_time),
+        eligible,
+        label: bits.join(' · '),
+      }
+    })
+    if (scratched && couponCode && !fromApi.some((c) => c.code.toUpperCase() === couponCode.toUpperCase())) {
+      fromApi.unshift({
+        code: couponCode,
+        amount: 10,
+        minOrder: 0,
+        oneTime: true,
+        eligible: true,
+        label: `${couponCode} · ₹10 off · one time`,
+      })
+    }
+    return fromApi
+  }, [serverCoupons, scratched, couponCode, subtotal])
+
+  useEffect(() => {
+    // Auto-apply once; do not re-apply after the user removes the coupon.
+    const eligible = couponOptions.filter((c) => c.eligible)
+    if (!eligible.length || promoApplied || couponCleared) return
+    const first = eligible[0]
     setPromoInput(first.code)
     setPromoApplied(first.amount)
-    setPromoMessage(`₹${first.amount} off applied`)
-  }, [couponOptions, promoApplied])
+    if (!confettiOnceRef.current) {
+      confettiOnceRef.current = true
+      celebrateCoupon()
+    }
+  }, [couponOptions, promoApplied, couponCleared])
 
-  const tax = useMemo(() => Math.round(subtotal * TAX_RATE), [subtotal])
-  const delivery = subtotal >= FREE_DELIVERY_MIN || subtotal === 0 ? 0 : DELIVERY_FEE
+  useEffect(() => {
+    if (!promoInput || !promoApplied) return
+    const match = couponOptions.find((c) => c.code.toUpperCase() === promoInput.toUpperCase())
+    if (match && !match.eligible) {
+      setPromoApplied(0)
+      setPromoInput('')
+    }
+  }, [couponOptions, promoInput, promoApplied])
+
+  useEffect(() => {
+    if (!couponOpen) return
+    const onPointer = (e: MouseEvent) => {
+      if (!couponMenuRef.current?.contains(e.target as Node)) setCouponOpen(false)
+    }
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') setCouponOpen(false)
+    }
+    document.addEventListener('mousedown', onPointer)
+    document.addEventListener('keydown', onKey)
+    return () => {
+      document.removeEventListener('mousedown', onPointer)
+      document.removeEventListener('keydown', onKey)
+    }
+  }, [couponOpen])
+
   const discount = promoApplied
-  const payable = Math.max(0, Math.round(subtotal + tax + delivery - discount))
+  const payable = Math.max(0, Math.round(subtotal - discount))
   const walletSpend = useWalletPay ? Math.min(balance, payable) : 0
   const razorpayDue = Math.max(0, payable - walletSpend)
+
+  const clearCoupon = () => {
+    setCouponCleared(true)
+    confettiOnceRef.current = false
+    setPromoInput('')
+    setPromoApplied(0)
+  }
 
   const onSelectCoupon = (value: string) => {
     setPromoInput(value)
     if (!value) {
-      setPromoApplied(0)
-      setPromoMessage('')
+      clearCoupon()
       return
     }
-    const match = couponOptions.find((c) => c.code === value)
-    const amount = match?.amount ?? PROMO_CODES[value.trim().toUpperCase()] ?? 0
+    setCouponCleared(false)
+    const match = couponOptions.find((c) => c.code.toUpperCase() === value.trim().toUpperCase())
+    if (!match?.eligible) {
+      setPromoApplied(0)
+      setError(
+        match?.minOrder
+          ? `Add items worth ₹${match.minOrder} to use ${match.code}`
+          : 'Coupon not available',
+      )
+      return
+    }
+    const amount = match.amount
     if (!amount) {
       setPromoApplied(0)
-      setPromoMessage('Invalid promo code')
       return
     }
+    setError('')
+    const freshlyApplied = promoApplied !== amount || promoInput !== value
     setPromoApplied(amount)
-    setPromoMessage(`₹${amount} off applied`)
+    if (freshlyApplied) celebrateCoupon()
+  }
+
+  const removeLine = (key: string) => {
+    if (removingKeys.includes(key)) return
+    setRemovingKeys((prev) => [...prev, key])
+    window.setTimeout(() => {
+      removeItem(key)
+      setRemovingKeys((prev) => prev.filter((k) => k !== key))
+    }, 320)
   }
 
   const onCheckout = async (e: FormEvent) => {
@@ -81,10 +163,6 @@ export function CartPage() {
     if (!lines.length) return
     if (!name.trim() || !phoneInput.trim()) {
       setError('Please enter name and phone')
-      return
-    }
-    if (!address.trim()) {
-      setError('Please add a delivery address')
       return
     }
 
@@ -99,9 +177,10 @@ export function CartPage() {
       const order = await api.placeOrder({
         guest_name: name.trim(),
         guest_phone: phone,
-        address,
+        address: 'Dine-in',
+        coupon_code: promoInput || undefined,
         notes: [
-          discount ? `Promo discount: ₹${discount}` : '',
+          discount ? `Coupon discount: ₹${discount}` : '',
           walletSpend ? `Wallet used: ₹${walletSpend}` : '',
         ]
           .filter(Boolean)
@@ -181,6 +260,7 @@ export function CartPage() {
 
   return (
     <div className="page cart-page checkout-page">
+      <CouponConfetti burstKey={confettiBurst} />
       <div className="checkout-hero">
         <Link to="/" className="checkout-back" aria-label="Back">
           <ArrowLeft size={20} />
@@ -218,13 +298,17 @@ export function CartPage() {
           </Link>
         </div>
       ) : (
-        <form className="checkout-body" onSubmit={(e) => void onCheckout(e)}>
+        <form id="checkout-form" className="checkout-body" onSubmit={(e) => void onCheckout(e)}>
           <ul className="checkout-items">
             {lines.map((line) => {
               const unit = lineUnitPrice(line.item, line.toppings)
               const lineTotal = unit * line.quantity
+              const fading = removingKeys.includes(line.key)
               return (
-                <li key={line.key} className="checkout-item">
+                <li
+                  key={line.key}
+                  className={`checkout-item${fading ? ' checkout-item--out' : ''}`}
+                >
                   <div className="checkout-item-media">
                     <img src={line.item.image_url} alt={line.item.name} />
                   </div>
@@ -235,14 +319,13 @@ export function CartPage() {
                         {line.toppings.map((t) => t.name).join(', ')}
                       </p>
                     )}
-                    <p className="checkout-unit">{formatMoney(unit)}</p>
                     <div className="checkout-qty">
                       <button
                         type="button"
                         aria-label="Decrease"
                         onClick={() => setQuantity(line.key, line.quantity - 1)}
                       >
-                        <Minus size={14} />
+                        <Minus size={12} />
                       </button>
                       <span>{padQty(line.quantity)}</span>
                       <button
@@ -250,94 +333,151 @@ export function CartPage() {
                         aria-label="Increase"
                         onClick={() => setQuantity(line.key, line.quantity + 1)}
                       >
-                        <Plus size={14} />
+                        <Plus size={12} />
                       </button>
                     </div>
                   </div>
-                  <strong className="checkout-line-total">{formatMoney(lineTotal)}</strong>
+                  <div className="checkout-item-end">
+                    <p className="checkout-line-total" aria-label="Line total">
+                      {unit}×{line.quantity}={lineTotal}
+                    </p>
+                    <button
+                      type="button"
+                      className="checkout-item-remove"
+                      aria-label={`Remove ${line.item.name}`}
+                      onClick={() => removeLine(line.key)}
+                    >
+                      <X size={14} strokeWidth={2.6} />
+                    </button>
+                  </div>
                 </li>
               )
             })}
           </ul>
 
-          <div className="promo-row promo-row--select">
-            <div className="promo-field">
-              <Ticket size={18} />
-              <select
-                className="promo-select"
-                value={promoInput}
-                onChange={(e) => onSelectCoupon(e.target.value)}
-                disabled={!couponOptions.length}
+          <section className={`checkout-offers${couponOpen ? ' is-open' : ''}`}>
+            <div className="checkout-offers__line" ref={couponMenuRef}>
+              <Ticket size={15} className="checkout-offers__ico" />
+              <span className="checkout-offers__label">Coupon</span>
+              <div
+                className={`promo-dd promo-dd--inline${couponOpen ? ' open' : ''}${!couponOptions.length ? ' disabled' : ''}`}
               >
-                <option value="">
-                  {couponOptions.length ? 'Select coupon' : 'Scratch card to unlock coupon'}
-                </option>
-                {couponOptions.map((opt) => (
-                  <option key={opt.code} value={opt.code}>
-                    {opt.label}
-                  </option>
-                ))}
-              </select>
+                <button
+                  type="button"
+                  className="promo-dd__trigger"
+                  aria-haspopup="listbox"
+                  aria-expanded={couponOpen}
+                  disabled={!couponOptions.length}
+                  onClick={() => setCouponOpen((v) => !v)}
+                >
+                  <span className="promo-dd__value">
+                    {promoInput
+                      ? couponOptions.find((c) => c.code === promoInput)?.code || promoInput
+                      : couponOptions.length
+                        ? 'Choose'
+                        : 'Locked'}
+                  </span>
+                  <ChevronDown size={14} className="promo-dd__chevron" />
+                </button>
+              </div>
+              <button
+                type="button"
+                className={`promo-clear${promoApplied > 0 ? '' : ' is-hidden'}`}
+                aria-label="Remove coupon"
+                tabIndex={promoApplied > 0 ? 0 : -1}
+                disabled={promoApplied <= 0}
+                onClick={() => {
+                  clearCoupon()
+                  setCouponOpen(false)
+                }}
+              >
+                <X size={13} strokeWidth={2.4} />
+              </button>
+              {couponOpen && couponOptions.length > 0 && (
+                <ul className="promo-dd__menu" role="listbox">
+                  <li role="option" aria-selected={!promoInput}>
+                    <button
+                      type="button"
+                      className={`promo-dd__option${!promoInput ? ' active' : ''}`}
+                      onClick={() => {
+                        onSelectCoupon('')
+                        setCouponOpen(false)
+                      }}
+                    >
+                      No coupon
+                    </button>
+                  </li>
+                  {couponOptions.map((opt) => (
+                    <li key={opt.code} role="option" aria-selected={promoInput === opt.code}>
+                      <button
+                        type="button"
+                        className={`promo-dd__option${promoInput === opt.code ? ' active' : ''}${opt.eligible ? '' : ' is-disabled'}`}
+                        disabled={!opt.eligible}
+                        onClick={() => {
+                          onSelectCoupon(opt.code)
+                          setCouponOpen(false)
+                        }}
+                      >
+                        <span>
+                          {opt.code}
+                          {!opt.eligible && opt.minOrder ? (
+                            <small> Min ₹{opt.minOrder}</small>
+                          ) : null}
+                          {opt.oneTime ? <small> One time</small> : null}
+                        </span>
+                        <em>−₹{opt.amount}</em>
+                      </button>
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </div>
+
+            <label
+              className={`checkout-offers__line wallet-pay-line${useWalletPay ? ' on' : ''}`}
+            >
+              <Wallet size={15} className="checkout-offers__ico" />
+              <span className="checkout-offers__label">Pay with wallet</span>
+              <span className="wallet-pay-line__meta">
+                {useWalletPay && walletSpend > 0
+                  ? `−₹${walletSpend}`
+                  : `${formatMoney(balance)} left`}
+              </span>
+              <input
+                type="checkbox"
+                checked={useWalletPay}
+                onChange={(e) => setUseWalletPay(e.target.checked)}
+              />
+            </label>
+          </section>
+
+          <div className="delivery-card delivery-card--compact">
+            <h2>Dine-in details</h2>
+            <div className="delivery-card__row">
+              <label>
+                Name
+                <input value={name} onChange={(e) => setName(e.target.value)} required />
+              </label>
+              <label>
+                Phone
+                <input
+                  value={phoneInput}
+                  onChange={(e) => setPhoneInput(e.target.value.replace(/\D/g, '').slice(0, 10))}
+                  required
+                  inputMode="numeric"
+                />
+              </label>
             </div>
           </div>
-          {promoMessage && (
-            <p className={`promo-msg${promoApplied ? ' ok' : ''}`}>{promoMessage}</p>
-          )}
-
-          <div className="delivery-card">
-            <h2>Delivery details</h2>
-            <label>
-              Name
-              <input value={name} onChange={(e) => setName(e.target.value)} required />
-            </label>
-            <label>
-              Phone
-              <input
-                value={phoneInput}
-                onChange={(e) => setPhoneInput(e.target.value.replace(/\D/g, '').slice(0, 10))}
-                required
-              />
-            </label>
-            <label>
-              Address
-              <textarea
-                value={address}
-                onChange={(e) => setAddress(e.target.value)}
-                required
-                rows={2}
-                placeholder="House / street / landmark"
-              />
-            </label>
-          </div>
-
-          <label className={`wallet-pay-toggle${useWalletPay ? ' on' : ''}`}>
-            <input
-              type="checkbox"
-              checked={useWalletPay}
-              onChange={(e) => setUseWalletPay(e.target.checked)}
-            />
-            <Wallet size={18} />
-            <span>
-              Pay with wallet ({formatMoney(balance)} available)
-            </span>
-          </label>
 
           <div className="totals-card">
             <div className="totals-row">
               <span>Subtotal</span>
               <span>{formatMoney(subtotal)}</span>
             </div>
-            <div className="totals-row">
-              <span>Tax & Fee</span>
-              <span>{formatMoney(tax)}</span>
-            </div>
-            <div className="totals-row">
-              <span>Delivery</span>
-              <span>{delivery === 0 ? 'Free' : formatMoney(delivery)}</span>
-            </div>
             {discount > 0 && (
               <div className="totals-row discount">
-                <span>Promo</span>
+                <span>Coupon</span>
                 <span>-{formatMoney(discount)}</span>
               </div>
             )}
@@ -355,15 +495,20 @@ export function CartPage() {
           </div>
 
           {error && <p className="form-error">{error}</p>}
-
-          <button type="submit" className="checkout-cta" disabled={submitting}>
-            {submitting
-              ? 'Processing…'
-              : razorpayDue > 0
-                ? `CHECKOUT · ${formatMoney(razorpayDue)}`
-                : 'CHECKOUT WITH WALLET'}
-          </button>
         </form>
+      )}
+
+      {lines.length > 0 && !doneId && (
+        <button
+          type="submit"
+          form="checkout-form"
+          className="checkout-fab"
+          disabled={submitting}
+        >
+          {submitting
+            ? 'Processing…'
+            : `Pay Rs.${razorpayDue > 0 ? razorpayDue : payable}`}
+        </button>
       )}
     </div>
   )

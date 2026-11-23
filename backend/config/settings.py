@@ -119,8 +119,14 @@ CSRF_TRUSTED_ORIGINS = [
 
 SECURE_PROXY_SSL_HEADER = ('HTTP_X_FORWARDED_PROTO', 'https')
 
-RAZORPAY_API_KEY = os.environ.get('RAZORPAY_API_KEY', 'rzp_live_YGBhKOx9vtofos')
-RAZORPAY_API_SECRET = os.environ.get('RAZORPAY_API_SECRET', 'aho2hMKBUmN0raiH69Ts7U05')
+def _env(name: str, default: str = '') -> str:
+    value = os.environ.get(name, '').strip()
+    return value or default
+
+
+# Prefer env when set; ignore blank .env values so deploy stubs don't wipe keys.
+RAZORPAY_API_KEY = _env('RAZORPAY_API_KEY', 'rzp_live_YGBhKOx9vtofos')
+RAZORPAY_API_SECRET = _env('RAZORPAY_API_SECRET', 'aho2hMKBUmN0raiH69Ts7U05')
 
 FIREBASE_WEB_CONFIG = {
     'apiKey': os.environ.get('FIREBASE_API_KEY', 'AIzaSyAvRobkSXCsNFOdogIFwKuN95nLOQIkXoI'),

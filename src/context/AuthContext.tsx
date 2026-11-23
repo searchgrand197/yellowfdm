@@ -8,6 +8,7 @@ interface AuthContextValue {
   phone: string | null
   loading: boolean
   loginWithFirebasePhone: (phone: string, name?: string) => Promise<User>
+  loginWithPassword: (username: string, password: string) => Promise<User>
   logout: () => Promise<void>
   refresh: () => Promise<void>
 }
@@ -52,6 +53,12 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         const data = await api.firebaseLogin(cleaned, name)
         setUser(data)
         setPhone(data.phone || cleaned)
+        return data
+      },
+      loginWithPassword: async (username, password) => {
+        const data = await api.login(username, password)
+        setUser(data)
+        setPhone(data.username)
         return data
       },
       logout: async () => {

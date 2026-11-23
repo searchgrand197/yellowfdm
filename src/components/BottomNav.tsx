@@ -35,12 +35,13 @@ export function BottomNav() {
       <NavLink
         to="/search?view=all"
         className={`nav-tab nav-tab--center${viewingAll ? ' active' : ''}`}
-        aria-label="All products"
+        aria-label="Menu"
       >
         <span className="nav-center-btn">
-          <LayoutGrid size={22} strokeWidth={2.2} />
+          <LayoutGrid size={14} strokeWidth={2.4} aria-hidden />
+          <span className="nav-center-label">MENU</span>
         </span>
-        <span className="sr-only">All products</span>
+        <span className="sr-only">Menu</span>
       </NavLink>
 
       <NavLink to="/search" className={`nav-tab${onSearch ? ' active' : ''}`}>

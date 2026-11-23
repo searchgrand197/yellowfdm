@@ -42,6 +42,19 @@ API calls to `/api` are proxied to Django on port 8000.
 - **Login:** Firebase phone OTP (same project as v1: `foodporium-382b5`)
 - **Payments:** Razorpay keys from `foodporiumv1.0` settings
 
+## Admin portal
+
+1. Create a staff user (already seeded locally as `admin` / `admin123` if you ran the seed):
+
+```bash
+cd backend
+python manage.py createsuperuser
+```
+
+2. Open [http://localhost:5173/admin/login](http://localhost:5173/admin/login)
+
+Features: orders (with buzz on new pending), categories, products/stock, toppings, coupons, combos, homepage featured/popular, open/close shop (public countdown when closed).
+
 ## Deploy (VPS)
 
 Domain: **www.foodporium.in** · App path: **/root/yellowfdm** · Repo: [searchgrand197/yellowfdm](https://github.com/searchgrand197/yellowfdm)

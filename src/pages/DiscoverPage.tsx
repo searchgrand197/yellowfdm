@@ -1,30 +1,35 @@
-import { Bell, Menu, Search } from 'lucide-react'
-import { useEffect, useMemo, useState } from 'react'
+import { Wallet } from 'lucide-react'
+import { useEffect, useState } from 'react'
 import { Link, useNavigate } from 'react-router-dom'
 import { api } from '../api/client'
 import { CategoryScroller } from '../components/CategoryScroller'
-import { buildCombos, ComboCarousel, PromoCarousel } from '../components/ComboCarousel'
+import { ComboCarousel, PromoCarousel, type ComboDeal } from '../components/ComboCarousel'
 import { FoodCard } from '../components/FoodCard'
+import { FoodporiumBrand } from '../components/FoodporiumBrand'
+import { useWallet } from '../context/WalletContext'
 import type { Category, MenuItem } from '../types'
 import { onlyCutouts } from '../utils/images'
+import { formatMoney } from '../utils/money'
 
 export function DiscoverPage() {
   const navigate = useNavigate()
+  const { balance } = useWallet()
   const [categories, setCategories] = useState<Category[]>([])
   const [items, setItems] = useState<MenuItem[]>([])
   const [featured, setFeatured] = useState<MenuItem[]>([])
-  const [popular, setPopular] = useState<MenuItem[]>([])
   const [activeCategory, setActiveCategory] = useState('')
   const [loading, setLoading] = useState(true)
+  const [combos, setCombos] = useState<ComboDeal[]>([])
 
   useEffect(() => {
     void (async () => {
       try {
-        const [cats, featuredItems, popularItems, allItems] = await Promise.all([
+        const [cats, featuredItems, popularItems, allItems, apiCombos] = await Promise.all([
           api.getCategories(),
           api.getItems({ featured: '1' }),
           api.getItems({ popular: '1' }),
           api.getItems(),
+          api.getCombos().catch(() => []),
         ])
         const cutoutAll = onlyCutouts(allItems.length ? allItems : popularItems)
         const cutoutFeatured = onlyCutouts(
@@ -32,7 +37,78 @@ export function DiscoverPage() {
         )
         setCategories(cats)
         setFeatured(cutoutFeatured.slice(0, 5))
-        setPopular(cutoutAll)
+        const byId = new Map(
+          [...cutoutAll, ...cutoutFeatured, ...popularItems, ...allItems].map((i) => [i.id, i]),
+        )
+        const stubItem = (
+          id: number,
+          name: string,
+          image: string,
+          priceShare: number,
+        ): MenuItem => ({
+          id,
+          name,
+          subtitle: '',
+          description: '',
+          price: String(priceShare),
+          original_price: null,
+          image_url: image,
+          delivery_mins: '20',
+          free_delivery: false,
+          rating: '0',
+          review_count: 0,
+          is_popular: false,
+          is_featured: false,
+          promo_label: '',
+          category: 0,
+          category_name: '',
+          category_slug: '',
+          is_favorite: false,
+          toppings: [],
+        })
+
+        const fromApi: ComboDeal[] = []
+        apiCombos.forEach((c, idx) => {
+          const ids = c.item_ids?.length
+            ? c.item_ids
+            : [c.item_a, c.item_b, c.item_c, c.item_d].filter((id): id is number => Boolean(id))
+          const names = c.item_names?.length
+            ? c.item_names
+            : [c.item_a_name, c.item_b_name, c.item_c_name, c.item_d_name].filter(
+                (n): n is string => Boolean(n),
+              )
+          const images = [
+            c.item_a_image,
+            c.item_b_image,
+            c.item_c_image,
+            c.item_d_image,
+          ].filter((img): img is string => Boolean(img))
+          const share = Number(c.actual_price || c.price) / Math.max(ids.length, 1)
+          const parts = ids
+            .map((id, i) => {
+              const found = byId.get(id)
+              if (found) return found
+              if (!names[i] || !images[i]) return null
+              return stubItem(id, names[i], images[i], share)
+            })
+            .filter((i): i is MenuItem => Boolean(i))
+          if (parts.length < 2) return
+          const photo = (c.image_url || '').trim()
+          fromApi.push({
+            id: `combo-${c.id}`,
+            title: c.name,
+            badge: c.badge || 'Combo',
+            tagline: `Save ₹${c.save_amount}`,
+            items: parts,
+            imageUrl: photo || undefined,
+            primary: parts[0],
+            side: parts[1],
+            saveAmount: Number(c.save_amount),
+            comboPrice: Number(c.price),
+            accent: idx % 3,
+          })
+        })
+        setCombos(fromApi)
         if (cats.length) {
           setActiveCategory((prev) =>
             prev && cats.some((c) => c.slug === prev) ? prev : cats[0].slug,
@@ -53,22 +129,14 @@ export function DiscoverPage() {
     })()
   }, [activeCategory])
 
-  const combos = useMemo(() => buildCombos(onlyCutouts(popular)), [popular])
-
   return (
     <div className="page discover-page">
       <header className="page-header">
-        <button type="button" className="icon-btn" aria-label="Menu">
-          <Menu size={22} />
-        </button>
-        <div className="header-actions">
-          <Link to="/search" className="icon-btn" aria-label="Search">
-            <Search size={20} />
-          </Link>
-          <button type="button" className="icon-btn" aria-label="Notifications">
-            <Bell size={20} />
-          </button>
-        </div>
+        <FoodporiumBrand />
+        <Link to="/profile" className="header-wallet" aria-label={`Wallet balance ${formatMoney(balance)}`}>
+          <Wallet size={16} strokeWidth={2.3} />
+          <span>{formatMoney(balance)}</span>
+        </Link>
       </header>
 
       <h1 className="page-title">Discover</h1>

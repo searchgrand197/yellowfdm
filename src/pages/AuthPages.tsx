@@ -1,10 +1,10 @@
 import { ArrowLeft } from 'lucide-react'
 import { useEffect, useState, type FormEvent } from 'react'
 import { useNavigate } from 'react-router-dom'
+import { api } from '../api/client'
 import { MorphingText, type MorphSlide } from '../components/MorphingText'
 import { useAuth } from '../context/AuthContext'
 import { useWallet } from '../context/WalletContext'
-import { clearRecaptcha, confirmPhoneOtp, sendPhoneOtp } from '../lib/firebase'
 
 const LOGIN_FOOD_IMAGES = [
   { src: '/media/images/corn_1_1-removebg-preview.png', alt: 'Corn pizza' },
@@ -24,12 +24,13 @@ const LOGIN_MORPH_SLIDES: MorphSlide[] = [
 ]
 
 function PhoneLoginForm() {
-  const { loginWithFirebasePhone } = useAuth()
+  const { refresh } = useAuth()
   const { setPhone: setWalletPhone, refresh: refreshWallet } = useWallet()
   const navigate = useNavigate()
   const [phone, setPhone] = useState('')
   const [otp, setOtp] = useState('')
   const [otpSent, setOtpSent] = useState(false)
+  const [devOtpHint, setDevOtpHint] = useState('')
   const [error, setError] = useState('')
   const [loading, setLoading] = useState(false)
   const [seconds, setSeconds] = useState(0)
@@ -48,27 +49,37 @@ function PhoneLoginForm() {
     }
     setLoading(true)
     setError('')
+    setDevOtpHint('')
     try {
-      await sendPhoneOtp(cleaned)
+      const res = await api.sendOtp(cleaned)
       setPhone(cleaned)
       setOtpSent(true)
       setSeconds(60)
+      if (res.dev_otp) {
+        setDevOtpHint(`Dev OTP: ${res.dev_otp}`)
+        setOtp(res.dev_otp)
+      }
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Could not send OTP')
-      clearRecaptcha()
     } finally {
       setLoading(false)
     }
   }
 
   const verifyOtp = async () => {
+    const cleaned = phone.replace(/\D/g, '').slice(-10)
+    if (otp.trim().length < 4) {
+      setError('Enter the OTP')
+      return
+    }
     setLoading(true)
     setError('')
     try {
-      await confirmPhoneOtp(otp.trim())
-      await loginWithFirebasePhone(phone)
-      setWalletPhone(phone)
-      await refreshWallet(phone)
+      const data = await api.verifyOtp(cleaned, otp.trim())
+      const loggedPhone = data.phone || cleaned
+      setWalletPhone(loggedPhone)
+      await refresh()
+      await refreshWallet(loggedPhone)
       navigate('/')
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Invalid OTP')
@@ -77,8 +88,9 @@ function PhoneLoginForm() {
     }
   }
 
-  const onSubmit = (e: FormEvent) => {
-    e.preventDefault()
+  const onSubmit = (e?: FormEvent) => {
+    e?.preventDefault()
+    if (loading) return
     if (otpSent) void verifyOtp()
     else void sendOtp()
   }
@@ -107,7 +119,7 @@ function PhoneLoginForm() {
                 : 'Enter your mobile number to get a one-time password and start ordering.'}
             </p>
 
-            <form className="onboard-login-form" onSubmit={onSubmit}>
+            <form className="onboard-login-form" onSubmit={onSubmit} id="phone-login-form">
               {!otpSent ? (
                 <label>
                   Mobile number
@@ -136,6 +148,7 @@ function PhoneLoginForm() {
                   />
                 </label>
               )}
+              {devOtpHint ? <p className="form-hint">{devOtpHint}</p> : null}
               {error && <p className="form-error">{error}</p>}
               {otpSent && (
                 <button
@@ -145,8 +158,8 @@ function PhoneLoginForm() {
                   onClick={() => {
                     setOtpSent(false)
                     setOtp('')
+                    setDevOtpHint('')
                     setError('')
-                    clearRecaptcha()
                   }}
                 >
                   {seconds > 0 ? `Change number (${seconds}s)` : 'Change number'}
@@ -155,10 +168,13 @@ function PhoneLoginForm() {
             </form>
           </div>
 
-          <MorphingText slides={LOGIN_MORPH_SLIDES} />
+          <MorphingText
+            slides={LOGIN_MORPH_SLIDES}
+            nextLabel={loading ? (otpSent ? 'Verifying…' : 'Sending…') : otpSent ? 'Verify' : 'Next'}
+            nextDisabled={loading}
+            onNext={() => onSubmit()}
+          />
         </section>
-
-        <div id="recaptcha-container" />
       </div>
     </div>
   )

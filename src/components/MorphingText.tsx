@@ -8,6 +8,10 @@ export type MorphSlide =
   | { type: 'image'; src: string; alt?: string }
   | { type: 'random-image'; pool: MorphImage[] }
 
+type ConcreteSlide =
+  | { type: 'text'; value: string }
+  | { type: 'image'; src: string; alt?: string }
+
 const DEFAULT_SLIDES: MorphSlide[] = [
   { type: 'text', value: 'Beat' },
   { type: 'text', value: 'the' },
@@ -24,19 +28,7 @@ function pickRandomImage(pool: MorphImage[], excludeSrc?: string): MorphImage {
   return options[Math.floor(Math.random() * options.length)] || pool[0]
 }
 
-function resolveSlide(
-  slide: MorphSlide,
-  lastImageSrc?: string,
-): { type: 'text'; value: string } | { type: 'image'; src: string; alt?: string } {
-  if (slide.type === 'text' || slide.type === 'image') return slide
-  const picked = pickRandomImage(slide.pool, lastImageSrc)
-  return { type: 'image', src: picked.src, alt: picked.alt }
-}
-
-function fillSlot(
-  slot: HTMLSpanElement,
-  slide: { type: 'text'; value: string } | { type: 'image'; src: string; alt?: string },
-) {
+function fillSlot(slot: HTMLSpanElement, slide: ConcreteSlide) {
   slot.replaceChildren()
   if (slide.type === 'text') {
     slot.classList.remove('is-image')
@@ -55,10 +47,17 @@ export function MorphingText({
   words,
   slides,
   showNext = true,
+  nextLabel = 'Next',
+  nextDisabled = false,
+  onNext,
 }: {
   words?: string[]
   slides?: MorphSlide[]
   showNext?: boolean
+  nextLabel?: string
+  nextDisabled?: boolean
+  /** When set, Next runs this instead of advancing the morph animation. */
+  onNext?: () => void
 }) {
   const text1Ref = useRef<HTMLSpanElement | null>(null)
   const text2Ref = useRef<HTMLSpanElement | null>(null)
@@ -77,26 +76,45 @@ export function MorphingText({
     const text2 = text2Ref.current
     if (!text1 || !text2 || resolvedSlides.length === 0) return
 
-    let textIndex = resolvedSlides.length - 1
+    const n = resolvedSlides.length
+    let textIndex = n - 1
     let time = performance.now()
     let morph = 0
     let cooldown = COOLDOWN_TIME
     let raf = 0
     let lastImageSrc = ''
+    /** Keep random-image picks stable for the whole Beat→…→image cycle. */
+    const lockedImages = new Map<number, MorphImage>()
+
+    const resolveAt = (index: number): ConcreteSlide => {
+      const i = ((index % n) + n) % n
+      const raw = resolvedSlides[i]
+      if (raw.type === 'text') return raw
+      if (raw.type === 'image') return raw
+
+      const existing = lockedImages.get(i)
+      if (existing) return { type: 'image', src: existing.src, alt: existing.alt }
+
+      const picked = pickRandomImage(raw.pool, lastImageSrc)
+      lockedImages.set(i, picked)
+      lastImageSrc = picked.src
+      return { type: 'image', src: picked.src, alt: picked.alt }
+    }
 
     const syncSlots = () => {
-      const currentRaw = resolvedSlides[textIndex % resolvedSlides.length]
-      const upcomingRaw = resolvedSlides[(textIndex + 1) % resolvedSlides.length]
-      const current = resolveSlide(currentRaw, lastImageSrc)
-      const upcoming = resolveSlide(
-        upcomingRaw,
-        current.type === 'image' ? current.src : lastImageSrc,
-      )
-      if (current.type === 'image') lastImageSrc = current.src
-      if (upcoming.type === 'image') lastImageSrc = upcoming.src
+      const current = resolveAt(textIndex)
+      const upcoming = resolveAt(textIndex + 1)
       fillSlot(text1, current)
       fillSlot(text2, upcoming)
       setGooey(current.type === 'text' && upcoming.type === 'text')
+
+      // Only one image in the DOM when the other slot is text — already true.
+      // When leaving an image slide, free it so the next loop can pick a new one.
+      const curIdx = ((textIndex % n) + n) % n
+      const nextIdx = ((textIndex + 1) % n + n) % n
+      for (const key of [...lockedImages.keys()]) {
+        if (key !== curIdx && key !== nextIdx) lockedImages.delete(key)
+      }
     }
 
     const setMorph = (fraction: number) => {
@@ -173,10 +191,14 @@ export function MorphingText({
         <button
           type="button"
           className="morph-text__next"
-          aria-label="Next"
-          onClick={() => nextRef.current?.()}
+          aria-label={nextLabel}
+          disabled={nextDisabled}
+          onClick={() => {
+            if (onNext) onNext()
+            else nextRef.current?.()
+          }}
         >
-          Next
+          {nextLabel}
           <ArrowRight size={18} strokeWidth={2.6} />
         </button>
       )}

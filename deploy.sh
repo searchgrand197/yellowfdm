@@ -93,6 +93,11 @@ EOF
   fi
 fi
 
+# Blank Razorpay lines from older .env.example break auth — strip them so app defaults apply.
+if [[ -f "${APP_DIR}/.env" ]]; then
+  sed -i '/^RAZORPAY_API_KEY=\s*$/d;/^RAZORPAY_API_SECRET=\s*$/d' "${APP_DIR}/.env" || true
+fi
+
 set -a
 # shellcheck disable=SC1091
 source "${APP_DIR}/.env"

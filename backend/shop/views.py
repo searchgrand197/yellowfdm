@@ -1,6 +1,10 @@
+import random
+import re
+
 from django.conf import settings
 from django.contrib.auth import authenticate, login, logout
 from django.contrib.auth.models import User
+from django.core.cache import cache
 from django.middleware.csrf import get_token
 from django.views.decorators.csrf import ensure_csrf_cookie
 from rest_framework import permissions, status, viewsets
@@ -9,18 +13,54 @@ from rest_framework.response import Response
 
 from decimal import Decimal
 
-from .models import Category, Favorite, MenuItem, Order, ScratchClaim, Wallet
+from django.utils import timezone
+
+from .models import Category, Combo, Coupon, Favorite, MenuItem, Order, ScratchClaim, ShopSettings, Wallet
 from .payments import create_razorpay_order, verify_razorpay_signature
 from .serializers import (
     CategorySerializer,
+    ComboSerializer,
+    CouponSerializer,
     LoginSerializer,
     MenuItemSerializer,
     OrderSerializer,
     RegisterSerializer,
+    ShopSettingsSerializer,
     UserSerializer,
 )
 
 FIREBASE_USER_PASSWORD = '12121212'
+OTP_TTL_SECONDS = 300
+OTP_CACHE_PREFIX = 'phone_otp:'
+
+
+def _normalize_phone(raw: str) -> str:
+    digits = re.sub(r'\D', '', str(raw or ''))
+    return digits[-10:] if len(digits) >= 10 else digits
+
+
+def _otp_cache_key(phone: str) -> str:
+    return f'{OTP_CACHE_PREFIX}{phone}'
+
+
+def _login_phone_user(request, phone: str, name: str = ''):
+    username = _normalize_phone(phone)
+    user = authenticate(request, username=username, password=FIREBASE_USER_PASSWORD)
+    if user is None:
+        if User.objects.filter(username=username).exists():
+            user = User.objects.get(username=username)
+            user.set_password(FIREBASE_USER_PASSWORD)
+            if name:
+                user.first_name = name
+            user.save()
+        else:
+            user = User.objects.create_user(
+                username=username,
+                password=FIREBASE_USER_PASSWORD,
+                first_name=name or username,
+            )
+    login(request, user)
+    return user, username
 
 
 class CategoryViewSet(viewsets.ReadOnlyModelViewSet):
@@ -34,6 +74,8 @@ class MenuItemViewSet(viewsets.ReadOnlyModelViewSet):
 
     def get_queryset(self):
         qs = MenuItem.objects.select_related('category').prefetch_related('toppings')
+        # Public menu hides stocked-out items
+        qs = qs.filter(available=True)
         category = self.request.query_params.get('category')
         search = self.request.query_params.get('search')
         popular = self.request.query_params.get('popular')
@@ -69,10 +111,88 @@ class OrderViewSet(viewsets.ModelViewSet):
 @api_view(['GET'])
 @permission_classes([permissions.AllowAny])
 def public_config(request):
+    from .shop_hours import effective_shop_payload
+
+    shop = ShopSettings.get_solo()
     return Response(
         {
             'razorpay_key': settings.RAZORPAY_API_KEY,
             'firebase': settings.FIREBASE_WEB_CONFIG,
+            'shop': effective_shop_payload(shop),
+        }
+    )
+
+
+@api_view(['GET'])
+@permission_classes([permissions.AllowAny])
+def public_combos(request):
+    qs = Combo.objects.filter(active=True).select_related('item_a', 'item_b', 'item_c', 'item_d')
+    return Response(ComboSerializer(qs, many=True).data)
+
+
+@api_view(['GET'])
+@permission_classes([permissions.AllowAny])
+def public_coupons(request):
+    now = timezone.now()
+    qs = Coupon.objects.filter(active=True)
+    data = []
+    for c in qs:
+        if c.expires_at and c.expires_at < now:
+            continue
+        if c.max_uses is not None and c.used_count >= c.max_uses:
+            continue
+        data.append(CouponSerializer(c).data)
+    return Response(data)
+
+
+@api_view(['POST'])
+@permission_classes([permissions.AllowAny])
+def send_otp(request):
+    """Generate a phone OTP. In DEBUG (no SMS gateway), returns the code for local login."""
+    phone = _normalize_phone(request.data.get('phone') or request.data.get('username') or '')
+    if len(phone) != 10:
+        return Response({'detail': 'Enter a valid 10-digit mobile number.'}, status=status.HTTP_400_BAD_REQUEST)
+
+    code = f'{random.randint(0, 999999):06d}'
+    cache.set(_otp_cache_key(phone), code, OTP_TTL_SECONDS)
+
+    # No SMS provider wired yet — always log; expose code when DEBUG so local login works.
+    print(f'[Foodporium OTP] +91{phone} -> {code}')
+    payload = {
+        'ok': True,
+        'phone': phone,
+        'message': 'OTP sent',
+        'expires_in': OTP_TTL_SECONDS,
+    }
+    if settings.DEBUG:
+        payload['dev_otp'] = code
+        payload['message'] = f'Dev OTP: {code}'
+    return Response(payload)
+
+
+@api_view(['POST'])
+@permission_classes([permissions.AllowAny])
+def verify_otp(request):
+    phone = _normalize_phone(request.data.get('phone') or request.data.get('username') or '')
+    otp = str(request.data.get('otp') or request.data.get('code') or '').strip()
+    name = str(request.data.get('name') or '').strip()
+
+    if len(phone) != 10:
+        return Response({'detail': 'Enter a valid 10-digit mobile number.'}, status=status.HTTP_400_BAD_REQUEST)
+    if not re.fullmatch(r'\d{4,8}', otp):
+        return Response({'detail': 'Enter the OTP you received.'}, status=status.HTTP_400_BAD_REQUEST)
+
+    expected = cache.get(_otp_cache_key(phone))
+    if not expected or expected != otp:
+        return Response({'detail': 'Invalid or expired OTP.'}, status=status.HTTP_400_BAD_REQUEST)
+
+    cache.delete(_otp_cache_key(phone))
+    user, username = _login_phone_user(request, phone, name)
+    return Response(
+        {
+            **UserSerializer(user).data,
+            'provider': 'phone',
+            'phone': username,
         }
     )
 
@@ -88,25 +208,7 @@ def firebase_login(request):
     if not phone:
         return Response({'detail': 'Phone number is required.'}, status=status.HTTP_400_BAD_REQUEST)
 
-    # Keep same username format as v1 (usually 10-digit local number)
-    username = phone.replace('+91', '').replace(' ', '')[-10:] if len(phone) > 10 else phone
-
-    user = authenticate(request, username=username, password=FIREBASE_USER_PASSWORD)
-    if user is None:
-        if User.objects.filter(username=username).exists():
-            user = User.objects.get(username=username)
-            user.set_password(FIREBASE_USER_PASSWORD)
-            if name:
-                user.first_name = name
-            user.save()
-        else:
-            user = User.objects.create_user(
-                username=username,
-                password=FIREBASE_USER_PASSWORD,
-                first_name=name or username,
-            )
-
-    login(request, user)
+    user, username = _login_phone_user(request, phone, name)
     return Response(
         {
             **UserSerializer(user).data,
@@ -193,16 +295,23 @@ def initiate_payment(request):
     try:
         response = create_razorpay_order(amount, order_id)
     except Exception as exc:
-        return Response({'error': str(exc)}, status=status.HTTP_400_BAD_REQUEST)
+        message = str(exc)
+        if 'Authentication' in message or 'auth' in message.lower():
+            message = (
+                'Razorpay authentication failed. Check RAZORPAY_API_KEY / '
+                'RAZORPAY_API_SECRET (blank .env values are ignored; live keys need HTTPS).'
+            )
+        return Response({'error': message}, status=status.HTTP_400_BAD_REQUEST)
 
     if order_id:
         Order.objects.filter(pk=order_id).update(razorpay_order_id=response['id'])
 
+    amount_paise = int(amount) * 100
     return Response(
         {
             'id': response['id'],
             'order_id': response['id'],
-            'amount': str(amount * 100),
+            'amount': amount_paise,
             'currency': 'INR',
             'key': settings.RAZORPAY_API_KEY,
         }
@@ -372,10 +481,12 @@ def pay_with_wallet(request):
     wallet.balance -= amount
     wallet.save(update_fields=['balance', 'updated_at'])
     order.wallet_used = (order.wallet_used or 0) + amount
-    if amount >= order.total:
+    remaining = order.total - order.wallet_used
+    if remaining <= 0:
         order.payment_status = 'completed'
         order.status = 'confirmed'
-        order.payment_id = f'wallet-{order.id}'
+        if not order.payment_id:
+            order.payment_id = f'wallet-{order.id}'
     order.save()
 
     return Response(

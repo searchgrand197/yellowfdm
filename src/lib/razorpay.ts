@@ -17,9 +17,14 @@ type RazorpayOptions = {
   modal?: { ondismiss?: () => void }
 }
 
+type RazorpayInstance = {
+  open: () => void
+  on: (event: string, cb: (resp: { error?: { description?: string; reason?: string } }) => void) => void
+}
+
 declare global {
   interface Window {
-    Razorpay?: new (options: RazorpayOptions) => { open: () => void }
+    Razorpay?: new (options: RazorpayOptions) => RazorpayInstance
   }
 }
 
@@ -42,6 +47,22 @@ export async function openRazorpayCheckout(options: RazorpayOptions) {
   if (!ok || !window.Razorpay) {
     throw new Error('Could not load Razorpay')
   }
-  const rzp = new window.Razorpay(options)
+  if (!options.key?.trim()) {
+    throw new Error('Missing Razorpay key')
+  }
+
+  const rzp = new window.Razorpay({
+    ...options,
+    amount: Number(options.amount),
+  })
+
+  rzp.on('payment.failed', (resp) => {
+    const desc = resp?.error?.description || resp?.error?.reason || 'Payment failed'
+    window.setTimeout(() => {
+      options.modal?.ondismiss?.()
+    }, 0)
+    console.error('Razorpay payment failed:', desc)
+  })
+
   rzp.open()
 }

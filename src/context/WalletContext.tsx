@@ -31,7 +31,6 @@ interface WalletContextValue {
   scratched: boolean
   setPhone: (phone: string) => void
   refresh: (phoneOverride?: string) => Promise<void>
-  topUp: (amount: number) => Promise<void>
   debit: (amount: number) => Promise<number>
   claimScratch: () => Promise<{ reward_code: string; reward_amount: number }>
   markScratched: () => void
@@ -89,14 +88,6 @@ export function WalletProvider({ children }: { children: ReactNode }) {
       scratched,
       setPhone,
       refresh,
-      topUp: async (amount) => {
-        if (phone) {
-          const data = await api.walletAction(phone, 'topup', amount)
-          persistBalance(Number(data.balance))
-          return
-        }
-        persistBalance(balance + amount)
-      },
       debit: async (amount) => {
         if (amount <= 0) return balance
         if (phone) {

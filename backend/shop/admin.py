@@ -1,6 +1,18 @@
 from django.contrib import admin
 
-from .models import Category, Favorite, MenuItem, Order, OrderItem, ScratchClaim, Topping, Wallet
+from .models import (
+    Category,
+    Combo,
+    Coupon,
+    Favorite,
+    MenuItem,
+    Order,
+    OrderItem,
+    ScratchClaim,
+    ShopSettings,
+    Topping,
+    Wallet,
+)
 
 
 class OrderItemInline(admin.TabularInline):
@@ -21,8 +33,8 @@ class ToppingAdmin(admin.ModelAdmin):
 
 @admin.register(MenuItem)
 class MenuItemAdmin(admin.ModelAdmin):
-    list_display = ('name', 'category', 'price', 'rating', 'is_popular', 'is_featured')
-    list_filter = ('category', 'is_popular', 'is_featured', 'free_delivery')
+    list_display = ('name', 'category', 'price', 'available', 'is_popular', 'is_featured')
+    list_filter = ('category', 'available', 'is_popular', 'is_featured', 'free_delivery')
     search_fields = ('name', 'subtitle')
     filter_horizontal = ('toppings',)
 
@@ -49,3 +61,17 @@ class WalletAdmin(admin.ModelAdmin):
 class ScratchClaimAdmin(admin.ModelAdmin):
     list_display = ('client_key', 'phone', 'reward_code', 'reward_amount', 'claimed', 'created_at')
 
+
+@admin.register(ShopSettings)
+class ShopSettingsAdmin(admin.ModelAdmin):
+    list_display = ('is_open', 'reopens_at', 'updated_at')
+
+
+@admin.register(Coupon)
+class CouponAdmin(admin.ModelAdmin):
+    list_display = ('code', 'amount', 'active', 'used_count', 'expires_at')
+
+
+@admin.register(Combo)
+class ComboAdmin(admin.ModelAdmin):
+    list_display = ('name', 'item_a', 'item_b', 'price', 'active', 'sort_order')

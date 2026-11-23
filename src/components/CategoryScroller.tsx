@@ -1,5 +1,4 @@
 import type { Category } from '../types'
-import { hasNoBackground } from '../utils/images'
 
 export function CategoryScroller({
   categories,
@@ -13,7 +12,7 @@ export function CategoryScroller({
   return (
     <div className="category-row" role="tablist" aria-label="Food categories">
       {categories.map((cat) => {
-        const showImage = Boolean(cat.image_url && hasNoBackground(cat.image_url))
+        const showImage = Boolean(cat.image_url)
         return (
           <button
             key={cat.id}
