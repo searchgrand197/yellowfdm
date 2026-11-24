@@ -64,9 +64,16 @@ def _login_phone_user(request, phone: str, name: str = ''):
 
 
 class CategoryViewSet(viewsets.ReadOnlyModelViewSet):
-    queryset = Category.objects.all()
     serializer_class = CategorySerializer
     lookup_field = 'slug'
+
+    def get_queryset(self):
+        # Only categories that have at least one available product (PDF menu).
+        return (
+            Category.objects.filter(items__available=True)
+            .distinct()
+            .order_by('sort_order', 'name')
+        )
 
 
 class MenuItemViewSet(viewsets.ReadOnlyModelViewSet):

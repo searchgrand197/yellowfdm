@@ -1,12 +1,29 @@
 import { Clock, Heart, Plus, Star, X } from 'lucide-react'
-import { useMemo, useState, type MouseEvent } from 'react'
+import { useEffect, useMemo, useState, type MouseEvent } from 'react'
 import { useCartMagic } from '../context/CartMagicContext'
 import { useCart } from '../context/CartContext'
 import { useFavorites } from '../context/FavoritesContext'
 import { lineUnitPrice, type MenuItem, type Topping } from '../types'
 import { formatMoney } from '../utils/money'
+import {
+  detectPizzaSize,
+  displayPizzaName,
+  pizzaBaseKey,
+  type PizzaSize,
+  type PizzaVariantMap,
+} from '../utils/pizzaSizes'
+import { toppingIcon, toppingLabel } from '../utils/toppingIcon'
 
-export function FoodCard({ item }: { item: MenuItem; index?: number }) {
+const SIZE_ORDER: PizzaSize[] = ['S', 'M', 'L']
+
+export function FoodCard({
+  item,
+  pizzaVariants,
+}: {
+  item: MenuItem
+  index?: number
+  pizzaVariants?: PizzaVariantMap
+}) {
   const { addItem } = useCart()
   const { launch } = useCartMagic()
   const { isFavorite, toggle } = useFavorites()
@@ -14,14 +31,38 @@ export function FoodCard({ item }: { item: MenuItem; index?: number }) {
   const [openToppings, setOpenToppings] = useState(false)
   const [selected, setSelected] = useState<Topping[]>([])
   const [favBusy, setFavBusy] = useState(false)
-  const liked = isFavorite(item.id)
+
+  const variantRow = useMemo(() => {
+    if (!pizzaVariants) return null
+    const key = pizzaBaseKey(item.name)
+    const row = pizzaVariants.get(key)
+    if (!row) return null
+    const count = SIZE_ORDER.filter((s) => row[s]).length
+    return count > 1 ? row : null
+  }, [item.name, pizzaVariants])
+
+  const initialSize = detectPizzaSize(item) || 'S'
+  const [size, setSize] = useState<PizzaSize>(initialSize)
+
+  useEffect(() => {
+    setSize(detectPizzaSize(item) || 'S')
+    setSelected([])
+    setOpenToppings(false)
+  }, [item.id])
+
+  const active = useMemo(() => {
+    if (!variantRow) return item
+    return variantRow[size] || variantRow[initialSize] || item
+  }, [variantRow, size, initialSize, item])
+
+  const liked = isFavorite(active.id)
 
   const toppings = useMemo(
-    () => (item.toppings || []).filter((t) => t.available !== false),
-    [item.toppings],
+    () => (active.toppings || []).filter((t) => t.available !== false),
+    [active.toppings],
   )
 
-  const unit = useMemo(() => lineUnitPrice(item, selected), [item, selected])
+  const unit = useMemo(() => lineUnitPrice(active, selected), [active, selected])
 
   const toggleTopping = (topping: Topping) => {
     setSelected((prev) => {
@@ -33,7 +74,7 @@ export function FoodCard({ item }: { item: MenuItem; index?: number }) {
   const onOrder = (e: MouseEvent<HTMLButtonElement>) => {
     e.preventDefault()
     e.stopPropagation()
-    addItem(item, 1, selected)
+    addItem(active, 1, selected)
     launch(e.currentTarget)
     setOpenToppings(false)
     setAdded(true)
@@ -46,16 +87,27 @@ export function FoodCard({ item }: { item: MenuItem; index?: number }) {
     if (favBusy) return
     setFavBusy(true)
     try {
-      await toggle(item.id)
+      await toggle(active.id)
     } finally {
       setFavBusy(false)
     }
   }
 
+  const onPickSize = (next: PizzaSize) => {
+    if (!variantRow?.[next]) return
+    setSize(next)
+    setSelected([])
+    setOpenToppings(false)
+  }
+
+  const title = variantRow ? displayPizzaName(active.name) : active.name
+
   return (
     <article className={`food-card${openToppings ? ' food-card--picking' : ''}`}>
-      <div className="food-card__image">
-        <img src={item.image_url} alt={item.name} loading="lazy" />
+      <div
+        className={`food-card__image${variantRow ? ` food-card__image--pizza food-card__image--${size.toLowerCase()}` : ''}`}
+      >
+        <img src={active.image_url} alt={title} loading="lazy" />
         <button
           type="button"
           className={`food-card__fav${liked ? ' on' : ''}`}
@@ -69,18 +121,37 @@ export function FoodCard({ item }: { item: MenuItem; index?: number }) {
       </div>
 
       <div className="food-card__details">
-        <h3 className="food-card__name">{item.name}</h3>
+        <h3 className="food-card__name">{title}</h3>
 
-        <div className="food-card__meta">
-          <span>
-            <Star size={11} fill="currentColor" />
-            {Number(item.rating || 0).toFixed(1)}
-          </span>
-          <span>
-            <Clock size={11} />
-            {item.delivery_mins || '30-40'}
-          </span>
-        </div>
+        {variantRow ? (
+          <div className="food-card__sizes" role="group" aria-label="Pizza size">
+            {SIZE_ORDER.map((s) => {
+              const available = Boolean(variantRow[s])
+              return (
+                <button
+                  key={s}
+                  type="button"
+                  className={`food-card__size${size === s ? ' on' : ''}`}
+                  disabled={!available}
+                  onClick={() => onPickSize(s)}
+                >
+                  {s === 'S' ? 'S' : s === 'M' ? 'M' : 'L'}
+                </button>
+              )
+            })}
+          </div>
+        ) : (
+          <div className="food-card__meta">
+            <span>
+              <Star size={11} fill="currentColor" />
+              {Number(active.rating || 0).toFixed(1)}
+            </span>
+            <span>
+              <Clock size={11} />
+              {active.delivery_mins || '30-40'}
+            </span>
+          </div>
+        )}
 
         {toppings.length > 0 && (
           <button
@@ -97,7 +168,7 @@ export function FoodCard({ item }: { item: MenuItem; index?: number }) {
 
         {selected.length > 0 && !openToppings && (
           <p className="food-card__picked">
-            {selected.map((t) => t.name).join(', ')}
+            {selected.map((t) => toppingLabel(t.name)).join(', ')}
           </p>
         )}
 
@@ -131,7 +202,12 @@ export function FoodCard({ item }: { item: MenuItem; index?: number }) {
                   className={`food-card__sheet-item${on ? ' on' : ''}`}
                   onClick={() => toggleTopping(topping)}
                 >
-                  <span>{topping.name}</span>
+                  <span className="food-card__sheet-label">
+                    <span className="food-card__sheet-icon" aria-hidden>
+                      {toppingIcon(topping.name)}
+                    </span>
+                    <span className="food-card__sheet-name">{toppingLabel(topping.name)}</span>
+                  </span>
                   <em>+{formatMoney(topping.price)}</em>
                 </button>
               )

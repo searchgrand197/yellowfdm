@@ -9,6 +9,7 @@ import { useFavorites } from '../context/FavoritesContext'
 import type { MenuItem, Topping } from '../types'
 import { lineUnitPrice } from '../types'
 import { formatMoney, formatReviewCount } from '../utils/money'
+import { toppingIcon, toppingLabel } from '../utils/toppingIcon'
 
 export function ProductDetailPage() {
   const { id } = useParams()
@@ -136,7 +137,12 @@ export function ProductDetailPage() {
                       className={`topping-chip${active ? ' active' : ''}`}
                       onClick={() => toggleTopping(topping)}
                     >
-                      <span>{topping.name}</span>
+                      <span className="topping-chip__label">
+                        <span className="topping-chip__icon" aria-hidden>
+                          {toppingIcon(topping.name)}
+                        </span>
+                        {toppingLabel(topping.name)}
+                      </span>
                       <strong>+{formatMoney(topping.price)}</strong>
                     </button>
                   )

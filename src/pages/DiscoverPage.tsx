@@ -1,15 +1,19 @@
 import { Wallet } from 'lucide-react'
-import { useEffect, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { Link, useNavigate } from 'react-router-dom'
 import { api } from '../api/client'
 import { CategoryScroller } from '../components/CategoryScroller'
 import { ComboCarousel, PromoCarousel, type ComboDeal } from '../components/ComboCarousel'
 import { FoodCard } from '../components/FoodCard'
 import { FoodporiumBrand } from '../components/FoodporiumBrand'
+import { OffersCarousel } from '../components/OffersCarousel'
+import { FoodporiumPromise } from '../components/FoodporiumPromise'
+import { PaymentAccept } from '../components/PaymentAccept'
 import { useWallet } from '../context/WalletContext'
-import type { Category, MenuItem } from '../types'
+import type { Category, Coupon, MenuItem } from '../types'
 import { onlyCutouts } from '../utils/images'
 import { formatMoney } from '../utils/money'
+import { buildPizzaVariantMap, dedupePizzaItems, pizzaBaseKey } from '../utils/pizzaSizes'
 
 export function DiscoverPage() {
   const navigate = useNavigate()
@@ -20,17 +24,29 @@ export function DiscoverPage() {
   const [activeCategory, setActiveCategory] = useState('')
   const [loading, setLoading] = useState(true)
   const [combos, setCombos] = useState<ComboDeal[]>([])
+  const [coupons, setCoupons] = useState<Coupon[]>([])
+  const [catalog, setCatalog] = useState<MenuItem[]>([])
+
+  const pizzaVariants = useMemo(() => buildPizzaVariantMap(catalog), [catalog])
+  const gridItems = useMemo(
+    () => dedupePizzaItems(items, pizzaVariants),
+    [items, pizzaVariants],
+  )
 
   useEffect(() => {
     void (async () => {
       try {
-        const [cats, featuredItems, popularItems, allItems, apiCombos] = await Promise.all([
+        const [cats, featuredItems, popularItems, allItems, apiCombos, apiCoupons] =
+          await Promise.all([
           api.getCategories(),
           api.getItems({ featured: '1' }),
           api.getItems({ popular: '1' }),
           api.getItems(),
           api.getCombos().catch(() => []),
+          api.getCoupons().catch(() => []),
         ])
+        setCoupons(apiCoupons)
+        setCatalog(allItems.length ? allItems : popularItems)
         const cutoutAll = onlyCutouts(allItems.length ? allItems : popularItems)
         const cutoutFeatured = onlyCutouts(
           featuredItems.length ? featuredItems : popularItems,
@@ -143,6 +159,8 @@ export function DiscoverPage() {
 
       <PromoCarousel items={featured.slice(0, 5)} />
 
+      <OffersCarousel coupons={coupons} />
+
       <div className="section-head">
         <h2>Combo deals</h2>
         <Link to={activeCategory ? `/search?category=${activeCategory}` : '/search'}>
@@ -171,11 +189,18 @@ export function DiscoverPage() {
         <p className="muted">Loading menu…</p>
       ) : (
         <div className="food-grid">
-          {items.map((item) => (
-            <FoodCard key={item.id} item={item} />
+          {gridItems.map((item) => (
+            <FoodCard
+              key={pizzaBaseKey(item.name) || item.id}
+              item={item}
+              pizzaVariants={pizzaVariants}
+            />
           ))}
         </div>
       )}
+
+      <FoodporiumPromise />
+      <PaymentAccept />
     </div>
   )
 }

@@ -4,8 +4,9 @@
 #   curl -fsSL https://raw.githubusercontent.com/searchgrand197/yellowfdm/main/deploy.sh | bash
 #   OR:  cd /root/yellowfdm && bash deploy.sh
 # Options:
-#   bash deploy.sh --seed     # also run import_v1 (first-time menu import)
-#   bash deploy.sh --ssl      # issue/renew Let's Encrypt cert via certbot
+#   bash deploy.sh --seed       # legacy import_v1 menu import
+#   bash deploy.sh --pdf-menu   # align catalog to printable PDF menu
+#   bash deploy.sh --ssl        # issue/renew Let's Encrypt cert via certbot
 
 set -euo pipefail
 
@@ -15,11 +16,13 @@ DOMAIN_WWW="www.foodporium.in"
 DOMAIN_APEX="foodporium.in"
 BRANCH="${BRANCH:-main}"
 SEED=0
+PDF_MENU=0
 SSL=0
 
 for arg in "$@"; do
   case "$arg" in
     --seed) SEED=1 ;;
+    --pdf-menu) PDF_MENU=1 ;;
     --ssl) SSL=1 ;;
     *) echo "Unknown option: $arg" >&2; exit 1 ;;
   esac
@@ -130,6 +133,12 @@ if [[ "${SEED}" -eq 1 ]]; then
   python manage.py import_v1 || true
 fi
 
+if [[ "${PDF_MENU}" -eq 1 ]]; then
+  log "Aligning menu to PDF (seed_pdf_menu)"
+  python manage.py seed_toppings || true
+  python manage.py seed_pdf_menu || true
+fi
+
 deactivate
 
 log "Installing systemd service"
@@ -192,4 +201,5 @@ echo "HTTP check:  curl -sI http://${DOMAIN_WWW} | head -5"
 echo "HTTPS check: curl -sI https://${DOMAIN_WWW} | head -5"
 echo
 echo "First-time menu seed:  bash ${APP_DIR}/deploy.sh --seed"
+echo "PDF menu align:        bash ${APP_DIR}/deploy.sh --pdf-menu"
 echo "Edit secrets:          nano ${APP_DIR}/.env && systemctl restart yellowfdm"

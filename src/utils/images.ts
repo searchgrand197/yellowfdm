@@ -34,7 +34,16 @@ export function hasNoBackground(url: string | null | undefined) {
   if (!url) return false
   // Admin uploads land in /media/uploads/ — treat as cutouts so they show like homepage.
   if (/\/media\/uploads\//i.test(url) || url.includes('/uploads/')) return true
-  return CUTOUT_FILES.has(basename(url))
+  const name = basename(url)
+  // AI / sheet seeded cutouts
+  if (
+    name.startsWith('menu-sheet-') ||
+    name.startsWith('menu-ai-') ||
+    name.startsWith('cat-ai-')
+  ) {
+    return true
+  }
+  return CUTOUT_FILES.has(name)
 }
 
 export function onlyCutouts<T extends { image_url: string }>(items: T[]) {

@@ -1,15 +1,18 @@
 import { Heart } from 'lucide-react'
-import { useEffect, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { Link } from 'react-router-dom'
 import { api } from '../api/client'
 import { FoodCard } from '../components/FoodCard'
 import { useFavorites } from '../context/FavoritesContext'
 import type { MenuItem } from '../types'
 import { onlyCutouts } from '../utils/images'
+import { buildPizzaVariantMap } from '../utils/pizzaSizes'
 
 export function FavoritesPage() {
   const { count, ids } = useFavorites()
   const [items, setItems] = useState<MenuItem[]>([])
+  const [catalog, setCatalog] = useState<MenuItem[]>([])
+  const pizzaVariants = useMemo(() => buildPizzaVariantMap(catalog), [catalog])
 
   useEffect(() => {
     if (ids.size === 0) {
@@ -21,6 +24,7 @@ export function FavoritesPage() {
       .getItems()
       .then((data) => {
         if (cancelled) return
+        setCatalog(data)
         setItems(onlyCutouts(data).filter((item) => ids.has(item.id)))
       })
       .catch(() => {
@@ -49,7 +53,7 @@ export function FavoritesPage() {
       ) : (
         <div className="food-grid">
           {items.map((item, index) => (
-            <FoodCard key={item.id} item={item} index={index} />
+            <FoodCard key={item.id} item={item} index={index} pizzaVariants={pizzaVariants} />
           ))}
         </div>
       )}

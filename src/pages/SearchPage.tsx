@@ -1,11 +1,12 @@
 import { Search } from 'lucide-react'
-import { useDeferredValue, useEffect, useState } from 'react'
+import { useDeferredValue, useEffect, useMemo, useState } from 'react'
 import { useSearchParams } from 'react-router-dom'
 import { api } from '../api/client'
 import { CategoryScroller } from '../components/CategoryScroller'
 import { FoodCard } from '../components/FoodCard'
 import type { Category, MenuItem } from '../types'
 import { onlyCutouts } from '../utils/images'
+import { buildPizzaVariantMap, dedupePizzaItems, pizzaBaseKey } from '../utils/pizzaSizes'
 
 export function SearchPage() {
   const [searchParams, setSearchParams] = useSearchParams()
@@ -16,6 +17,13 @@ export function SearchPage() {
   const [categories, setCategories] = useState<Category[]>([])
   const [activeCategory, setActiveCategory] = useState(viewAll ? '' : categoryParam)
   const [items, setItems] = useState<MenuItem[]>([])
+  const [catalog, setCatalog] = useState<MenuItem[]>([])
+
+  const pizzaVariants = useMemo(() => buildPizzaVariantMap(catalog), [catalog])
+  const gridItems = useMemo(
+    () => dedupePizzaItems(items, pizzaVariants),
+    [items, pizzaVariants],
+  )
 
   useEffect(() => {
     void api.getCategories().then((cats) => {
@@ -30,6 +38,10 @@ export function SearchPage() {
       if (match) setQuery('')
     })
   }, [categoryParam, viewAll])
+
+  useEffect(() => {
+    void api.getItems().then(setCatalog).catch(() => setCatalog([]))
+  }, [])
 
   useEffect(() => {
     void (async () => {
@@ -84,11 +96,15 @@ export function SearchPage() {
       </div>
 
       <div className="food-grid">
-        {items.map((item) => (
-          <FoodCard key={item.id} item={item} />
+        {gridItems.map((item) => (
+          <FoodCard
+            key={pizzaBaseKey(item.name) || item.id}
+            item={item}
+            pizzaVariants={pizzaVariants}
+          />
         ))}
       </div>
-      {!items.length && (
+      {!gridItems.length && (
         <p className="muted">
           {deferred.trim() ? `No matches for “${deferred}”.` : 'No items in this category.'}
         </p>
